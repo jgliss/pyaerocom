@@ -322,10 +322,10 @@ class ReadUngridded():
                     read_dummy.read(self.vars_to_read)
 
 
-            elif data_set_to_read == const.AERONET_SUN_V3L20_AOD_DAILY_NAME:
+            elif data_set_to_read == const.AERONET_SUN_V3L2_AOD_DAILY_NAME:
                 print("Not implemented at this point.")
 
-            elif data_set_to_read == const.AERONET_SUN_V3L20_AOD_ALL_POINTS_NAME:
+            elif data_set_to_read == const.AERONET_SUN_V3L2_AOD_ALL_POINTS_NAME:
                 print("Not implemented at this point.")
 
             elif data_set_to_read == const.EARLINET_NAME:
