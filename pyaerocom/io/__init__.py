@@ -45,5 +45,5 @@ from .readgridded import ReadGridded, ReadGriddedMulti
 from .readungridded import ReadUngridded
 from .fileconventions import FileConventionRead
 
-
+from .read_c3s_l2_satellite_data import ReadC3sL2SatelliteData
 from . import testfiles
