@@ -52,7 +52,7 @@ class ReadAeolusL2bData:
     IMPORTANT:
     This module requires the coda package to be installed in the local python distribution.
     The coda package can be obtained from http://stcorp.nl/coda/
-    In addition it needs a definition file (named AEOLUS-20170913.codadef at the time of
+    In addition, it needs a definition file (named AEOLUS-20170913.codadef at the time of
     this writing) that came with the test data from ESA and seems to be available also via the coda
     github page at https://github.com/stcorp/codadef-aeolus/releases/download/20170913/AEOLUS-20170913.codadef.
 
@@ -62,13 +62,9 @@ class ReadAeolusL2bData:
     ----------
     data : numpy array of dtype np.float64 initially of shape (10000,8)
         data point array
-    metadata : dict
-        meta data dictionary
 
     Parameters
     ----------
-    verbose : Bool
-        if True some running information is printed
 
     """
     _FILEMASK = '*.DBL'
@@ -96,7 +92,6 @@ class ReadAeolusL2bData:
     _LATITUDENAME = 'latitude'
     _LONGITUDENAME = 'longitude'
     _ALTITUDENAME = 'altitude'
-    _TIMENAME = 'time'
     # variable_data
     _EC550NAME = 'ec550aer'
     _BS550NAME = 'bs550aer'
@@ -116,7 +111,6 @@ class ReadAeolusL2bData:
     # meta data vars
     # will be stored as array of strings
     METADATA_COLNAMES = {}
-    #METADATA_COLNAMES['time'] = 'sca_optical_properties/starttime'
     METADATA_COLNAMES[_LATITUDENAME] = 'sca_optical_properties/geolocation_middle_bins/latitude'
     METADATA_COLNAMES[_LONGITUDENAME] = 'sca_optical_properties/geolocation_middle_bins/longitude'
     METADATA_COLNAMES[_ALTITUDENAME] = 'sca_optical_properties/geolocation_middle_bins/altitude'
@@ -126,18 +120,20 @@ class ReadAeolusL2bData:
     _COLNAMES.update(METADATA_COLNAMES)
 
     # because the time is only stored once for an entire profile, we have tp treat that separately
-    TIME_NAME = 'time'
+    _TIME_NAME = 'time'
     TIME_PATH = 'sca_optical_properties/starttime'
 
     # additional vars
     # calculated
     AUX_COLNAMES = []
 
+    # create a dict with the aerocom variable name as key and the index number in the
+    # resulting numpy array as value.
     _INDEX_DICT = {}
     _INDEX_DICT.update({_LATITUDENAME: _LATINDEX})
     _INDEX_DICT.update({_LONGITUDENAME: _LONINDEX})
     _INDEX_DICT.update({_ALTITUDENAME: _ALTITUDEINDEX})
-    _INDEX_DICT.update({TIME_NAME:_TIMEINDEX})
+    _INDEX_DICT.update({_TIME_NAME:_TIMEINDEX})
     _INDEX_DICT.update({_EC550NAME:_EC550INDEX})
     _INDEX_DICT.update({_BS550NAME:_BS550INDEX})
     _INDEX_DICT.update({_LODNAME:_LODINDEX})
@@ -150,28 +146,22 @@ class ReadAeolusL2bData:
     # in meters
     MAX_DISTANCE = 50000.
 
-    def __init__(self, index_pointer=0, dataset_to_read=None, verbose=False):
+    def __init__(self, index_pointer=0, loglevel=logging.INFO, verbose=False):
         self.verbose = verbose
         self.metadata = {}
         self.data = []
         self.index = len(self.metadata)
         self.files = []
-        # the reading actually works for all V3 direct sun data sets
-        # so just adjust the name and the path here
-        # const.AERONET_SUN_V3L15_AOD_DAILY_NAME is the default
-        if dataset_to_read is None:
-            pass
-            # self.dataset_name = const.AERONET_SUN_V3L15_AOD_DAILY_NAME
-            # self.dataset_path = const.OBSCONFIG[const.AERONET_SUN_V3L15_AOD_DAILY_NAME]['PATH']
-
-
-        # set the revision to the one from Revision.txt if that file exist
-        # self.revision = self.get_data_revision()
-
-        # pointer to 1st free row in self.data
-        # can be externally set so that in case the super class wants to read more than one data set
-        # no data modification is needed to bring several data sets together
         self.index_pointer = index_pointer
+        if loglevel is not None:
+            self.logger = logging.getLogger(__name__)
+            # self.logger = logging.getLogger('pyaerocom')
+            default_formatter = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(default_formatter)
+            self.logger.addHandler(console_handler)
+            self.logger.setLevel(loglevel)
+            self.logger.debug('test')
 
     def __iter__(self):
         return self
@@ -191,9 +181,8 @@ class ReadAeolusL2bData:
 
     ###################################################################################
 
-    # def read_file(self, filename, vars_to_read=None, backend_to_use='netcdf4',verbose=False):
-    def read_file(self, filename, vars_to_read=None, return_as='dict', verbose=False):
-        """method to read an data file entirely
+    def read_file(self, filename, vars_to_read=None, return_as='dict',loglevel=None):
+        """method to read an ESA binary data file entirely
 
         Parameters
         ----------
@@ -206,7 +195,32 @@ class ReadAeolusL2bData:
 
         Returns
         --------
-        xarray dataset of the entire file
+        Either:
+            dictionary (default):
+                keys are 'time', 'latitude', 'longitude', 'altitude' and the variable names
+                'ec550aer', 'bs550aer', 'sr', 'lod' if the whole file is read
+                'time' is a 1d array, while the other dict values are a another dict with the
+                time as keys (the same ret['time']) and a numpy array as values. These values represent the profile.
+                Note 1: latitude and longitude are height dependent due to the tilt of the measurement.
+                Note 2: negative values indicate a NaN
+
+            2d ndarray of type float:
+                representing a 'point cloud' with all points
+                    column 1: time in seconds since the Unix epoch with ms accuracy (same time for every height
+                    in a profile)
+                    column 2: latitude
+                    column 3: longitude
+                    column 4: altitude
+                    column 5: extinction
+                    column 6: backscatter
+                    column 7: sr
+                    column 8: lod
+
+                    Note: negative values are put to np.nan already
+
+                    The indexes are noted in pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData.<index_name>
+                    e.g. the time index is named pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData._TIMEINDEX
+                    have a look at the example to access the values
 
         This is whats in one DBL file
         codadump list /lustre/storeA/project/aerocom/aerocom1/ADM_CALIPSO_TEST/download/AE_OPER_ALD_U_N_2A_20070101T002249149_002772000_003606_0001.DBL
@@ -405,31 +419,41 @@ class ReadAeolusL2bData:
         The question mark indicates a variable size array
 
         It is not entirely clear what we actually have to look at.
-        For simplicity the dat of the group 'sca_optical_properties' is returned at this point
+        For simplicity the data of the group 'sca_optical_properties' is returned at this point
 
         Example
         -------
         >>> import pyaerocom.io.read_aeolus_l2b_data
         >>> obj = pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData(verbose=True)
         >>> filename = '/lustre/storeA/project/aerocom/aerocom1/ADM_CALIPSO_TEST/download/AE_OPER_ALD_U_N_2A_20070101T002249149_002772000_003606_0001.DBL'
+        >>> # read returning a ndarray
         >>> filedata = obj.read_file(filename, vars_to_read=['ec550aer'], return_as='numpy')
+        >>> time_as_numpy_datetime64 = filedata[0,pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData._TIMEINDEX].astype('datetime64[s]')
+        >>> print('time: {}'.format(time_as_numpy_datetime64))
+        >>> print('latitude: {}'.format(filedata[1,pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData._LATINDEX]))
+        >>> # read returning a dictionary
         >>> filedata = obj.read_file(filename, vars_to_read=['ec550aer'])
-        >>> print(filedata['time'])
+        >>> print('time: {}'.format(filedata['time'][0].astype('datetime64[s]')))
+        >>> print('all latitudes of 1st time step: {}'.format(filedata['latitude'][filedata['time'][0]]))
         """
 
         import time
         import coda
 
-        # BaseTimeNympy = np.datetime64('2000-01-01')
-        base_time = pd.DatetimeIndex(['2000-01-01'])
-        # that's the seconds to add to the the time coming from coda
-        seconds_to_add = (base_time.view('int64') // pd.Timedelta(1, unit='s'))[0]
 
-        point_index = 0
+        # coda uses 2000-01-01T00:00:00 as epoch unfortunately.
+        # so calculate the difference in seconds to the Unix epoch
+        seconds_to_add = np.datetime64('2000-01-01T00:00:00') - np.datetime64('1970-01-01T00:00:00')
+        seconds_to_add = seconds_to_add.astype(np.float_)
+
+        # the same can be achieved using pandas, but we stick to numpy here
+        # base_time = pd.DatetimeIndex(['2000-01-01'])
+        # seconds_to_add = (base_time.view('int64') // pd.Timedelta(1, unit='s'))[0]
+
         start_time = time.perf_counter()
         file_data = {}
 
-        logging.warning('reading file {}'.format(filename))
+        self.logger.info('reading file {}'.format(filename))
 
         # read file
         product = coda.open(filename)
@@ -441,56 +465,56 @@ class ReadAeolusL2bData:
         # read data
         # start with the time because it is only stored once
         groups = self.TIME_PATH.split(self.GROUP_DELIMITER)
-        file_data[self.TIME_NAME] = coda.fetch(product,
-                                    groups[0],
-                                    -1,
-                                    groups[1])
+        file_data[self._TIME_NAME] = coda.fetch(product,
+                                                groups[0],
+                                                -1,
+                                                groups[1])
         # epoch is 1 January 2000 at ESA
         # so add offset to move that to 1 January 1970
-        # and save it into a np.datetime64 object
+        # and save it into a np.datetime64[ms] object
 
-        file_data[self.TIME_NAME] = \
-            ((file_data[self.TIME_NAME]+seconds_to_add)*1.E3).astype(np.int).astype('datetime64[ms]')
-        # scalar
-        # single_ts = np.datetime64(np.int((file_data[self.TIME_NAME][0]+seconds_to_add)*1.E3), 'ms')
-        # 1167610969347
+        file_data[self._TIME_NAME] = \
+            ((file_data[self._TIME_NAME] + seconds_to_add) * 1.E3).astype(np.int).astype('datetime64[ms]')
 
         # read data in a simple dictionary
         for var in vars_to_read:
             groups = self._COLNAMES[var].split(self.GROUP_DELIMITER)
             if len(groups) == 3:
                 file_data[var] = {}
-                idx=0
-                for idx, key in enumerate(file_data[self.TIME_NAME]):
-                    # np_key = np.datetime64(np.int(key*1.E3), 'ms')
-                    # file_data[var][key]={}
+                for idx, key in enumerate(file_data[self._TIME_NAME]):
                     file_data[var][key]=coda.fetch(product,
-                                           groups[0],
-                                           idx,
-                                           groups[1],
-                                           -1,
-                                           groups[2])
+                                                   groups[0],
+                                                   idx,
+                                                   groups[1],
+                                                   -1,
+                                                   groups[2])
 
             elif len(groups) == 2:
-                file_data[var][key] = coda.fetch(product,
-                                       groups[0],
-                                       -1,
-                                       groups[1])
+                file_data[var] = {}
+                for idx, key in enumerate(file_data[self._TIME_NAME]):
+                    file_data[var][key] = coda.fetch(product,
+                                                     groups[0],
+                                                     -1,
+                                                     groups[1])
             else:
-                file_data[var][key] = coda.fetch(product,
-                                       groups[0])
+                file_data[var] = {}
+                for idx, key in enumerate(file_data[self._TIME_NAME]):
+                    file_data[var][key] = coda.fetch(product,
+                                                     groups[0])
         if return_as == 'numpy':
-            # return as one multidimensional numpy array that can be put into self.data (semi-)directly
-            # MODLINENO = 10000
+            # return as one multidimensional numpy array that can be put into self.data directly
+            # (column wise because the column numbers do not match)
             index_pointer = 0
             data = np.empty([self._ROWNO, self._COLNO], dtype=np.float_)
-            # for idx, _time in enumerate(file_data['time']):
-            for idx, _time in enumerate(file_data['time'].astype(np.float_)):
-                # print(idx)
+            for idx, _time in enumerate(file_data['time'].astype(np.float_)/1000.):
+                # file_data['time'].astype(np.float_) is milliseconds after the (Unix) epoch
+                # but we want to save the time as seconds since the epoch
                 for _index in range(len(file_data[var][file_data['time'][idx]])):
                     data[index_pointer, self._TIMEINDEX] = _time
                     for var in vars_to_read:
                         data[index_pointer, self._INDEX_DICT[var]] = file_data[var][file_data['time'][idx]][_index]
+                        if data[index_pointer, self._INDEX_DICT[var]] < 0.:
+                            data[index_pointer, self._INDEX_DICT[var]] = np.nan
 
                     index_pointer += 1
                     if index_pointer >= self._ROWNO:
@@ -498,42 +522,50 @@ class ReadAeolusL2bData:
                         data = np.append(data, np.zeros([self._CHUNKSIZE, self._COLNO], dtype=np.float_),
                                               axis=0)
                         self._ROWNO += self._CHUNKSIZE
-                # print(_time)
+
+            # return only the needed elements...
             file_data = data[0:index_pointer]
 
         end_time = time.perf_counter()
         elapsed_sec = end_time - start_time
-        temp = 'elapsed seconds: {:.3f}'.format(elapsed_sec)
-        logging.warning(temp)
+        temp = 'time for single file read [s]: {:.3f}'.format(elapsed_sec)
+        self.logger.info(temp)
+        self.logger.info('{} points read'.format(index_pointer))
         return file_data
 
     ###################################################################################
 
-    def read(self, vars_to_read=['od550aer'], locs=None, backend='geopy', verbose=False):
+    def read(self, base_dir=None, vars_to_read=['ec550aer'], locs=None, backend='geopy', verbose=False):
         """method to read all files in self.files into self.data and self.metadata
+        At this point the data format is NOT the same as for the ungridded base class
+
 
         Example
         -------
-        >>> import pyaerocom.io.read_c3s_l2_satellite_data
-        >>> obj = pyaerocom.io.read_c3s_l2_satellite_data.ReadC3sL2SatelliteData(verbose=True)
+        >>> import logging
+        >>> import pyaerocom.io.read_aeolus_l2b_data
+        >>> obj = pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData(loglevel=logging.DEBUG)
+        >>> obj.read(vars_to_read=['ec550aer'])
         >>> locations = [(49.093,8.428,0.),(58.388, 8.252, 0.)]
-        >>> obj.read(locs=locations,verbose=True)
+        >>> obj.read(locs=locations,vars_to_read=['ec550aer'],verbose=True)
         >>> obj.read(verbose=True)
         """
-
-        # Metadata key is float because the numpy array holding it is float
 
         import time
         import geopy.distance
 
+        start_time = time.perf_counter()
         self.files = self.get_file_list()
-        self.data = np.empty([self._ROWNO, self._COLNO], dtype=np.float_)
+        after_file_search_time = time.perf_counter()
+        elapsed_sec = after_file_search_time - start_time
+        temp = 'time for file find: {:.3f}'.format(elapsed_sec)
+        self.logger.info(temp)
+
+        # self.data = np.empty([self._ROWNO, self._COLNO], dtype=np.float_)
         MODLINENO=10000
 
-        for _file in sorted(self.files):
-            if self.verbose:
-                sys.stdout.write(_file + "\n")
-            file_data = self.read_file(_file, vars_to_read=vars_to_read)
+        for idx, _file in enumerate(sorted(self.files)):
+            file_data = self.read_file(_file, vars_to_read=vars_to_read, return_as='numpy')
             # the metatdata dict is left empty for L2 data
             # the location in the data set is time step dependant!
 
@@ -548,36 +580,31 @@ class ReadAeolusL2bData:
             # separate the code between returning
             # - all data
             # - just a subset at locations (but all time steps
-            # - subset of locations and certain time steps
+            # - TODO: subset of locations and certain time steps
 
+            start_time_read = time.perf_counter()
             if locs is None:
                 # return all data points
-                start_time = time.perf_counter()
-                for var in sorted(vars_to_read):
-                    for idx in range(file_data['time']['data'].size):
-                        if self.index_pointer % MODLINENO == 0:
-                            print('{} copied'.format(self.index_pointer))
-                        self.data[self.index_pointer, self._DATAINDEX] = file_data[var]['data'][idx]
-                        self.data[self.index_pointer, self._TIMEINDEX] = file_data['time']['data'][idx]
-                        self.data[self.index_pointer, self._LATINDEX] = file_data['latitude']['data'][idx]
-                        self.data[self.index_pointer, self._LONINDEX] = file_data['longitude']['data'][idx]
-                        # self.data[self.index_pointer, self._ALTITUDEINDEX] = np.float_(var_data.altitude)
-                        self.data[self.index_pointer, self._VARINDEX] = obs_var_index
+                num_points = len(file_data)
+                if idx == 0:
+                    self.data = file_data
+                    self._ROWNO = num_points
+                    self.index_pointer = num_points
 
-                        self.index_pointer += 1
-                        if self.index_pointer >= self._ROWNO:
-                            # add another array chunk to self.data
-                            self.data = np.append(self.data, np.zeros([self._CHUNKSIZE, self._COLNO], dtype=np.float_),
-                                                  axis=0)
-                            self._ROWNO += self._CHUNKSIZE
+                else:
+                    # append to self.data
+                    # add another array chunk to self.data
+                    self.data = np.append(self.data, np.zeros([num_points, self._COLNO], dtype=np.float_),
+                                          axis=0)
+                    self._ROWNO = num_points
+                    #copy the data
+                    self.data[self.index_pointer:,:] = file_data
+                    self.index_pointer = self.index_pointer + num_points
 
-                    obs_var_index += 1
-
-                    end_time = time.perf_counter()
-                    if verbose:
-                        elapsed_sec = end_time - start_time
-                        temp = 'elapsed seconds: {:.3f}'.format(elapsed_sec)
-                        print(temp)
+                end_time = time.perf_counter()
+                # elapsed_sec = end_time - start_time_read
+                # temp = 'time for single file read seconds: {:.3f}'.format(elapsed_sec)
+                # self.logger.warning(temp)
             elif isinstance(locs, list):
                 if backend == 'geopy':
                     # return just the data points at given locations
@@ -671,43 +698,36 @@ class ReadAeolusL2bData:
             else:
                 print('locations not recognised')
 
+        end_time = time.perf_counter()
+        elapsed_sec = end_time - start_time
+        temp = 'overall time for file read [s]: {:.3f}'.format(elapsed_sec)
+        self.logger.info(temp)
+        self.logger.info('size of data object: {}'.format(self.index_pointer))
 
-        # shorten self.data to the right number of points
-        if verbose:
-            print('size of data object: {}'.format(self.index_pointer))
-
-        self.data = self.data[0:self.index_pointer]
 
     ###################################################################################
 
-    def get_file_list(self):
+    def get_file_list(self, basedir=None):
         """search for files to read
 
         Example
         -------
-        >>> import pyaerocom.io.read_c3s_l2_satellite_data
-        >>> obj = pyaerocom.io.read_c3s_l2_satellite_data.ReadC3sL2SatelliteData(verbose=True)
-        >>> obj.get_file_list()
+        >>> import pyaerocom.io.read_aeolus_l2b_data
+        >>> obj = pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData(verbose=True)
+        >>> files = obj.get_file_list()
         """
 
-        if self.verbose:
-            print('searching for data files. This might take a while...')
-        files = glob.glob(os.path.join(self.DATASET_PATH,'**',
-                                       self._FILEMASK),
-                          recursive=True)
+        self.logger.info('searching for data files. This might take a while...')
+        if basedir is None:
+            files = glob.glob(os.path.join(self.DATASET_PATH,'**',
+                                           self._FILEMASK),
+                              recursive=True)
+        else:
+            files = glob.glob(os.path.join(basedir,'**',
+                                           self._FILEMASK),
+                              recursive=True)
+
         return files
 
     ###################################################################################
 
-    def get_data_revision(self):
-        """method to read the revision string from the file Revision.txt in the main data directory"""
-
-        revision_file = os.path.join(self.DATASET_PATH, const.REVISION_FILE)
-        revision = 'unset'
-        if os.path.isfile(revision_file):
-            with open(revision_file, 'rt') as in_file:
-                revision = in_file.readline().strip()
-                in_file.close()
-
-            self.revision = revision
-###################################################################################
