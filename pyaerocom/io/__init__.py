@@ -46,4 +46,5 @@ from .readungridded import ReadUngridded
 from .fileconventions import FileConventionRead
 
 from .read_c3s_l2_satellite_data import ReadC3sL2SatelliteData
+from .read_aeolus_l2b_data import ReadAeolusL2bData
 from . import testfiles
