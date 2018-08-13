@@ -530,7 +530,7 @@ class ReadAeolusL2bData:
         elapsed_sec = end_time - start_time
         temp = 'time for single file read [s]: {:.3f}'.format(elapsed_sec)
         self.logger.info(temp)
-        self.logger.info('{} points read'.format(index_pointer))
+        #self.logger.info('{} points read'.format(index_pointer))
         return file_data
 
     ###################################################################################
