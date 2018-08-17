@@ -144,6 +144,16 @@ class ReadAeolusL2bData:
     _INDEX_DICT.update({_LODNAME: _LODINDEX})
     _INDEX_DICT.update({_SRNAME: _SRINDEX})
 
+    # NaN values are variable specific
+    _NAN_DICT = {}
+    _NAN_DICT.update({_LATITUDENAME: -1.E-6})
+    _NAN_DICT.update({_LONGITUDENAME: -1.E-6})
+    _NAN_DICT.update({_ALTITUDENAME: -1.})
+    _NAN_DICT.update({_EC550NAME: -1.E6})
+    _NAN_DICT.update({_BS550NAME: -1.E6})
+    _NAN_DICT.update({_LODNAME: -1.})
+    _NAN_DICT.update({_SRNAME: -1.})
+
     PROVIDES_VARIABLES = list(DATA_COLNAMES.keys())
     PROVIDES_VARIABLES.append(list(METADATA_COLNAMES.keys()))
 
@@ -151,6 +161,8 @@ class ReadAeolusL2bData:
     # in meters
     MAX_DISTANCE = 50000.
     EARTH_RADIUS = geopy.distance.EARTH_RADIUS
+    NANVAL_META = -1.E-6
+    NANVAL_DATA = -1.E6
 
     def __init__(self, index_pointer=0, loglevel=logging.INFO, verbose=False):
         self.verbose = verbose
@@ -438,10 +450,10 @@ class ReadAeolusL2bData:
         >>> obj = pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData(verbose=True)
         >>> filename = '/lustre/storeA/project/aerocom/aerocom1/ADM_CALIPSO_TEST/download/AE_OPER_ALD_U_N_2A_20070101T002249149_002772000_003606_0001.DBL'
         >>> # read returning a ndarray
-        >>> filedata = obj.read_file(filename, vars_to_read=['ec550aer'], return_as='numpy')
-        >>> time_as_numpy_datetime64 = filedata[0,pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData._TIMEINDEX].astype('datetime64[s]')
+        >>> filedata_numpy = obj.read_file(filename, vars_to_read=['ec550aer'], return_as='numpy')
+        >>> time_as_numpy_datetime64 = filedata_numpy[0,obj._TIMEINDEX].astype('datetime64[s]')
         >>> print('time: {}'.format(time_as_numpy_datetime64))
-        >>> print('latitude: {}'.format(filedata[1,pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData._LATINDEX]))
+        >>> print('latitude: {}'.format(filedata_numpy[1,obj._LATINDEX]))
         >>> # read returning a dictionary
         >>> filedata = obj.read_file(filename, vars_to_read=['ec550aer'])
         >>> print('time: {}'.format(filedata['time'][0].astype('datetime64[s]')))
@@ -464,7 +476,6 @@ class ReadAeolusL2bData:
         file_data = {}
 
         self.logger.info('reading file {}'.format(filename))
-
         # read file
         product = coda.open(filename)
         if vars_to_read is None:
@@ -516,20 +527,26 @@ class ReadAeolusL2bData:
             # (column wise because the column numbers do not match)
             index_pointer = 0
             data = np.empty([self._ROWNO, self._COLNO], dtype=np.float_)
+
             for idx, _time in enumerate(file_data['time'].astype(np.float_) / 1000.):
                 # file_data['time'].astype(np.float_) is milliseconds after the (Unix) epoch
                 # but we want to save the time as seconds since the epoch
-                for _index in range(len(file_data[var][file_data['time'][idx]])):
+                for _index in range(len(file_data['latitude'][file_data['time'][idx]])):
+                    # this works because all variables have to have the same size
+                    # (aka same number of height levels)
+                    # This loop could be avoided using numpy index slicing
+                    # do that in case we need more optimisations
                     data[index_pointer, self._TIMEINDEX] = _time
                     for var in vars_to_read:
                         data[index_pointer, self._INDEX_DICT[var]] = file_data[var][file_data['time'][idx]][_index]
-                        if data[index_pointer, self._INDEX_DICT[var]] < 0.:
+                        # put negative values to np.nan if the variable is not a metadata variable
+                        if data[index_pointer, self._INDEX_DICT[var]] == self._NAN_DICT[var]:
                             data[index_pointer, self._INDEX_DICT[var]] = np.nan
 
                     index_pointer += 1
                     if index_pointer >= self._ROWNO:
                         # add another array chunk to self.data
-                        data = np.append(data, np.zeros([self._CHUNKSIZE, self._COLNO], dtype=np.float_),
+                        data = np.append(data, np.empty([self._CHUNKSIZE, self._COLNO], dtype=np.float_),
                                          axis=0)
                         self._ROWNO += self._CHUNKSIZE
 
@@ -572,142 +589,34 @@ class ReadAeolusL2bData:
         self.logger.info(temp)
 
         # self.data = np.empty([self._ROWNO, self._COLNO], dtype=np.float_)
-        MODLINENO = 10000
 
         for idx, _file in enumerate(sorted(self.files)):
             file_data = self.read_file(_file, vars_to_read=vars_to_read, return_as='numpy')
-            # the metatdata dict is left empty for L2 data
+            # the metadata dict is left empty for L2 data
             # the location in the data set is time step dependant!
 
-            # this is a list with indexes of this station for each variable
-            # not sure yet, if we really need that or if it speeds up things
-            # self.metadata[met_data_key]['indexes'] = {}
-            # start_index = self.index_pointer
+            # start_time_read = time.perf_counter()
+            # return all data points
+            num_points = len(file_data)
+            if idx == 0:
+                self.data = file_data
+                self._ROWNO = num_points
+                self.index_pointer = num_points
 
-            # variable index
-            obs_var_index = 0
+            else:
+                # append to self.data
+                # add another array chunk to self.data
+                self.data = np.append(self.data, np.zeros([num_points, self._COLNO], dtype=np.float_),
+                                      axis=0)
+                self._ROWNO = num_points
+                # copy the data
+                self.data[self.index_pointer:, :] = file_data
+                self.index_pointer = self.index_pointer + num_points
 
-            # separate the code between returning
-            # - all data
-            # - just a subset at locations (but all time steps
-            # - TODO: subset of locations and certain time steps
-
-            start_time_read = time.perf_counter()
-            if locs is None:
-                # return all data points
-                num_points = len(file_data)
-                if idx == 0:
-                    self.data = file_data
-                    self._ROWNO = num_points
-                    self.index_pointer = num_points
-
-                else:
-                    # append to self.data
-                    # add another array chunk to self.data
-                    self.data = np.append(self.data, np.zeros([num_points, self._COLNO], dtype=np.float_),
-                                          axis=0)
-                    self._ROWNO = num_points
-                    # copy the data
-                    self.data[self.index_pointer:, :] = file_data
-                    self.index_pointer = self.index_pointer + num_points
-
-                end_time = time.perf_counter()
+                # end_time = time.perf_counter()
                 # elapsed_sec = end_time - start_time_read
                 # temp = 'time for single file read seconds: {:.3f}'.format(elapsed_sec)
                 # self.logger.warning(temp)
-            elif isinstance(locs, list):
-                if backend == 'geopy':
-                    # return just the data points at given locations
-                    # try using geopy for distance calculation
-                    # might not be extremely fast though
-
-                    start_time = time.perf_counter()
-                    for loc_index in range(len(locs)):
-                        for var in sorted(vars_to_read):
-                            for idx in range(file_data['time']['data'].size):
-                                if self.index_pointer > 0 and self.index_pointer % MODLINENO == 0:
-                                    print('{} copied'.format(self.index_pointer))
-
-                                # one magnitude slower than geopy.distance.great_circle
-                                # distance = geopy.distance.distance(locs[0],(file_data['latitude']['data'][idx], file_data['longitude']['data'][idx])).m
-                                # exclude wrong coordinates
-                                if np.isnan(file_data['latitude']['data'][idx] + file_data['longitude']['data'][idx]):
-                                    continue
-                                distance = geopy.distance.great_circle(locs[loc_index],
-                                                                       (file_data['latitude']['data'][idx],
-                                                                        file_data['longitude']['data'][idx])).m
-                                if distance <= self.MAX_DISTANCE:
-                                    print('idx: {} dist [m]: {}'.format(idx, distance))
-                                    self.data[self.index_pointer, self._DATAINDEX] = file_data[var]['data'][idx]
-                                    self.data[self.index_pointer, self._TIMEINDEX] = file_data['time']['data'][idx]
-                                    self.data[self.index_pointer, self._LATINDEX] = file_data['latitude']['data'][idx]
-                                    self.data[self.index_pointer, self._LONINDEX] = file_data['longitude']['data'][idx]
-                                    self.data[self.index_pointer, self._OBSLATINDEX] = locs[loc_index][0]
-                                    self.data[self.index_pointer, self._OBSLONINDEX] = locs[loc_index][1]
-                                    self.data[self.index_pointer, self._OBSALTITUDEINDEX] = locs[loc_index][2]
-                                    self.data[self.index_pointer, self._DISTANCEINDEX] = distance
-                                    # self.data[self.index_pointer, self._ALTITUDEINDEX] = np.float_(var_data.altitude)
-                                    self.data[self.index_pointer, self._VARINDEX] = obs_var_index
-
-                                    self.index_pointer += 1
-                                    if self.index_pointer >= self._ROWNO:
-                                        # add another array chunk to self.data
-                                        self.data = np.append(self.data,
-                                                              np.zeros([self._CHUNKSIZE, self._COLNO], dtype=np.float_),
-                                                              axis=0)
-                                        self._ROWNO += self._CHUNKSIZE
-                                # else:
-                                #     print('dist [m]: {}'.format(distance))
-                            obs_var_index += 1
-
-                    # print some time statistics
-                    end_time = time.perf_counter()
-                    if verbose:
-                        elapsed_sec = end_time - start_time
-                        temp = 'elapsed seconds: {:.3f}'.format(elapsed_sec)
-                        print(temp)
-
-                elif backend == 'pyaerocom':
-                    # this will be using a self written method to calculate the distance
-
-                    # first copy entire data to temporary numpy array
-                    # Then do the calculation with a numpy vector op
-
-                    # return all data points
-                    start_time = time.perf_counter()
-                    for var in sorted(vars_to_read):
-                        for idx in range(file_data['time']['data'].size):
-                            if self.index_pointer % MODLINENO == 0:
-                                print('{} copied'.format(self.index_pointer))
-                        #     self.data[self.index_pointer, self._DATAINDEX] = file_data[var]['data'][idx]
-                        #     self.data[self.index_pointer, self._TIMEINDEX] = file_data['time']['data'][idx]
-                        #     self.data[self.index_pointer, self._LATINDEX] = file_data['latitude']['data'][idx]
-                        #     self.data[self.index_pointer, self._LONINDEX] = file_data['longitude']['data'][idx]
-                        #     # self.data[self.index_pointer, self._ALTITUDEINDEX] = np.float_(var_data.altitude)
-                        #     self.data[self.index_pointer, self._VARINDEX] = obs_var_index
-                        #
-                        #     self.index_pointer += 1
-                        #     if self.index_pointer >= self._ROWNO:
-                        #         # add another array chunk to self.data
-                        #         self.data = np.append(self.data,
-                        #                               np.zeros([self._CHUNKSIZE, self._COLNO], dtype=np.float_),
-                        #                               axis=0)
-                        #         self._ROWNO += self._CHUNKSIZE
-                        #
-                        # obs_var_index += 1
-
-                        end_time = time.perf_counter()
-                        if verbose:
-                            elapsed_sec = end_time - start_time
-                            temp = 'elapsed seconds: {:.3f}'.format(elapsed_sec)
-                            print(temp)
-
-                    pass
-                else:
-                    print('Error: unknown backend name provided')
-
-            else:
-                print('locations not recognised')
 
         end_time = time.perf_counter()
         elapsed_sec = end_time - start_time
@@ -745,7 +654,7 @@ class ReadAeolusL2bData:
         """calculate the distance between a given coordinate and all points in self.data using numpy and
         put that in self.data[*,self._DISTINDEX]
 
-        This method will likely never be used by a user, but serves as helper method for the
+        This method will likely never be used by a user, but serves as helper method for the colocate method
 
         Because the average earth radius in geopy.distance.EARTH_RADIUS is given in km, the result is also given in km
 
@@ -769,16 +678,6 @@ class ReadAeolusL2bData:
         >>> print('min distance: {:.3f} km'.format(np.nanmin(obj.data[:, obj._DISTINDEX])))
         >>> print('max distance: {:.3f} km'.format(np.nanmax(obj.data[:, obj._DISTINDEX])))
         """
-        # IDL code
-        # lat1 = d_lat1 *!const.pi / 180.
-        # lat2 = d_lat2 *!const.pi / 180.
-        # lon1 = d_lon1 *!const.pi / 180.
-        # lon2 = d_lon2 *!const.pi / 180.
-        #
-        # r = 6372.795
-        #
-        # d =!const.R_Earth * 2 * asin(
-        # sqrt((sin((lat1 - lat2) / 2)) ^ 2 + cos(lat1) * cos(lat2) * (sin((lon1 - lon2) / 2)) ^ 2))
 
         start_time = time.perf_counter()
         if backend == 'pyaerocom':
@@ -816,6 +715,9 @@ class ReadAeolusL2bData:
         elif backend == 'geopy':
             # use geopy to calculate distance
             # two magnitudes slower than the pyaerocom backend
+            # but told us that we did the calculation right and opens a possibility to use
+            # a geopy supported geoid for the calculation. Although that will then be another
+            # magnitude slower than geopy.distance.great_circle
             start_time = time.perf_counter()
             for idx in range(len(self.data[:,self._TIMEINDEX])):
                 # blend out NaNs in lat and long
@@ -830,23 +732,22 @@ class ReadAeolusL2bData:
                                                        (self.data[idx,self._LATINDEX],
                                                         self.data[idx, self._LONINDEX])).km
 
-
             end_time = time.perf_counter()
             elapsed_sec = end_time - start_time
             temp = 'time for single station distance calc using geopy [s]: {:.3f}'.format(elapsed_sec)
             self.logger.info(temp)
-        elif backend == 'loop':
+        else:
             pass
 
         # return self.data
 
     ###################################################################################
-    def colocate(self, location=[(49.093, 8.428, 0.)], max_dist=50.):
+    def colocate(self, location=None, max_dist=50., bbox=None, resample_to_grid=None):
         """return a point cloud of points that fall within a given distance in km around a given location
 
         Because the average earth radius in geopy.distance.EARTH_RADIUS is given in km, the result is also given in km
 
-        This method should return the same values as geopy.distance.great_circle
+        This method returns the same values as geopy.distance.great_circle
 
         Example
         -------
@@ -854,12 +755,23 @@ class ReadAeolusL2bData:
         >>> import pyaerocom.io.read_aeolus_l2b_data
         >>> obj = pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData(loglevel=logging.DEBUG)
         >>> obj.read(vars_to_read=['ec550aer'])
+        >>> # return the data points within a radius of a certain station
         >>> location = [(49.093,8.428,0.)]
         >>> max_dist = 300
         >>> result = obj.colocate(location=location, max_dist=max_dist)
         >>> import numpy as np
         >>> print('min distance: {:.3f} km'.format(np.nanmin(obj.data[:, obj._DISTINDEX])))
         >>> print('max distance: {:.3f} km'.format(np.nanmax(obj.data[:, obj._DISTINDEX])))
+        >>> # return the data belonging to a certain area (here: EUROPE)
+        >>> bbox = [(30., 80., -20., 70.)]
+        >>> result = obj.colocate(bbox = bbox)
+        >>> # return the data for regridding (selects the data for every grid point using the bboxes)
+        >>> result = obj.colocate(resample_to_grid=True)
+        >>> # find non empty bboxes
+        >>> length=[len(result[x]['data']) for x in range(len(result))]
+        >>> indexes=np.where(np.asarray(length) > 0.)[0].tolist()
+        >>> result[indexes[0]]['bbox']
+        >>> result[indexes[0]]['data'].shape
         """
 
         start_time = time.perf_counter()
@@ -867,44 +779,162 @@ class ReadAeolusL2bData:
         ret_data = np.empty([self._ROWNO, self._COLNO], dtype=np.float_)
         index_counter = 0
         cut_flag = True
-        if isinstance(location,list):
-            # parameter is a list
-            # iterate
-            for idx, loc in enumerate(location):
-                # calculate distance
-                self.calc_dist_in_data(loc)
-                matching_indexes = np.where(self.data[:,self._DISTINDEX] < max_dist)
-                matching_length = len(matching_indexes[0])
-                if matching_length > 0:
-                    # check if the data fits into ret_data
-                    end_index = index_counter + matching_length
-                    if end_index > len(ret_data):
-                        # append the needed elements
-                        logging.info('adding {} elements to ret_data'.format(end_index - len(ret_data)))
-                        ret_data = np.append(ret_data,
-                            np.zeros([end_index - len(ret_data),
-                                      self._COLNO], dtype=np.float_,axis=0))
-                        cut_flag = False
+        if location is not None:
+            if isinstance(location,list):
+                # parameter is a list
+                # iterate
+                for idx_lat, loc in enumerate(location):
+                    # calculate distance
+                    self.calc_dist_in_data(loc)
+                    matching_indexes = np.where(self.data[:,self._DISTINDEX] < max_dist)
+                    matching_length = len(matching_indexes[0])
+                    if matching_length > 0:
+                        # check if the data fits into ret_data
+                        end_index = index_counter + matching_length
+                        if end_index > len(ret_data):
+                            # append the needed elements
+                            logging.info('adding {} elements to ret_data'.format(end_index - len(ret_data)))
+                            ret_data = np.append(ret_data,
+                                np.zeros([end_index - len(ret_data),
+                                          self._COLNO], dtype=np.float_,axis=0))
+                            cut_flag = False
 
-                    ret_data[index_counter:index_counter+matching_length,:] = self.data[matching_indexes,:]
-                    index_counter += matching_length
+                        ret_data[index_counter:index_counter+matching_length,:] = self.data[matching_indexes,:]
+                        index_counter += matching_length
 
-        elif isinstance(location, tuple):
-            pass
+            elif isinstance(location, tuple):
+                logging.error('passing one location as tuple not supported at this point')
+                pass
+            else:
+                logging.error('locations have to be passed as a list of tuples with (lat, lon)')
+                pass
+            # return only the part of the array containing some values
+            if cut_flag:
+                ret_data = ret_data[:index_counter, :]
+            end_time = time.perf_counter()
+            elapsed_sec = end_time - start_time
+            temp = 'time for single station distance calc [s]: {:.3f}'.format(elapsed_sec)
+            self.logger.info(temp)
+            # log the found times
+            unique_times = np.unique(self.data[matching_indexes, self._TIMEINDEX]).astype('datetime64[s]')
+            self.logger.info('matching times:')
+            self.logger.info(unique_times)
+
+        elif bbox is not None:
+            # return points in the bounding box given in bbox
+            if isinstance(bbox,list):
+                # parameter is a list
+                # iterate
+                ret_data = {}
+                for idx, _bbox in enumerate(bbox):
+                    ret_data[idx] = {}
+                    ret_data[idx]['data'] = self.select_bbox(_bbox)
+                    ret_data[idx]['bbox'] = _bbox
+            else:
+                pass
+            end_time = time.perf_counter()
+            elapsed_sec = end_time - start_time
+            temp = 'time for bbox calc [s]: {:.3f}'.format(elapsed_sec)
+            self.logger.info(temp)
+        elif resample_to_grid:
+            # resample to 1x1 degree grid at this point
+            # create a list of tuple with the bounding boxes for a 1x1 degree grid
+            # there's more efficient ways of doing that
+            start_lat = -90.
+            end_lat = 90.
+            lat_spacing = 1.
+            start_lon = -180.
+            end_lon = 180.
+            lon_spacing = 1.
+            grid_lats_start = list(np.arange(start_lat,end_lat,lat_spacing))
+            grid_lats_end = list(np.arange(start_lat+lat_spacing,end_lat+lat_spacing,lat_spacing))
+            grid_lons_start = list(np.arange(start_lon,end_lon,lon_spacing))
+            grid_lons_end = list(np.arange(start_lon+lon_spacing,end_lon+lon_spacing,lon_spacing))
+
+            bbox_temp = []
+            for idx_lat in range(len(grid_lats_start)):
+                for idx_lon in range(len(grid_lons_start)):
+                    bbox_temp.append((grid_lats_start[idx_lat], grid_lats_end[idx_lat],
+                                 grid_lons_start[idx_lon], grid_lons_end[idx_lon]))
+            ret_data = {}
+            for idx, _bbox in enumerate(bbox_temp):
+                # select the values
+                ret_data[idx] = {}
+                ret_data[idx]['data'] = self.select_bbox(_bbox)
+                ret_data[idx]['bbox'] = _bbox
+                if idx > 0 and idx % 1000 == 0:
+                    self.logger.warning('{} boxes co-located'.format(idx))
+
+            end_time = time.perf_counter()
+            elapsed_sec = end_time - start_time
+            temp = 'time for gridding calc [s]: {:.3f}'.format(elapsed_sec)
+            self.logger.info(temp)
         else:
             pass
 
-        # return only the part of the array containing some values
-        if cut_flag:
-            ret_data = ret_data[:index_counter,:]
-        end_time = time.perf_counter()
-        elapsed_sec = end_time - start_time
-        temp = 'time for single station distance calc [s]: {:.3f}'.format(elapsed_sec)
-        self.logger.info(temp)
-        # log the found times
-        unique_times=np.unique(self.data[matching_indexes,self._TIMEINDEX]).astype('datetime64[s]')
-        self.logger.info('matching times:')
-        self.logger.info(unique_times)
         return ret_data
 
     ###################################################################################
+
+    def select_bbox(self,bbox=None):
+        """method to return all points of self.data laying within a certain latitude and longitude range
+
+        This method will likely never be used by a user, but serves as helper method for the colocate method
+
+        EXAMPLE
+        =======
+        >>> import logging
+        >>> import pyaerocom.io.read_aeolus_l2b_data
+        >>> obj = pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData(loglevel=logging.DEBUG)
+        >>> obj.read(vars_to_read=['ec550aer'])
+        >>> bbox = (-62.,-61.,7.,8.)
+        >>> result = obj.select_bbox(bbox)
+        >>> import numpy as np
+        >>> print('min distance: {:.3f} km'.format(np.nanmin(obj.data[:, obj._DISTINDEX])))
+        >>> print('max distance: {:.3f} km'.format(np.nanmax(obj.data[:, obj._DISTINDEX])))
+
+
+        """
+        start_time = time.perf_counter()
+
+        # ret_data = np.empty([self._ROWNO, self._COLNO], dtype=np.float_)
+        # index_counter = 0
+        # cut_flag = True
+
+        if bbox is not None:
+            logging.info(bbox)
+            lat_min = bbox[0]
+            lat_max = bbox[1]
+            lon_min = bbox[2]
+            lon_max = bbox[3]
+
+            # remove NaNs at this point
+            matching_indexes = np.where(np.isfinite(self.data[:, self._LATINDEX]))
+            ret_data = self.data[matching_indexes[0],:]
+
+            # np.where can unfortunately only work with a single criterion
+            matching_indexes = np.where(ret_data[:, self._LATINDEX] <= lat_max)
+            ret_data = ret_data[matching_indexes[0],:]
+            # logging.warning('len after lat_max: {}'.format(len(ret_data)))
+            matching_indexes = np.where(ret_data[:, self._LATINDEX] > lat_min)
+            ret_data = ret_data[matching_indexes[0], :]
+            # logging.warning('len after lat_min: {}'.format(len(ret_data)))
+            matching_indexes = np.where(ret_data[:, self._LONINDEX] <= lon_max)
+            ret_data = ret_data[matching_indexes[0], :]
+            # logging.warning('len after lon_max: {}'.format(len(ret_data)))
+            matching_indexes = np.where(ret_data[:, self._LONINDEX] > lon_min)
+            ret_data = ret_data[matching_indexes[0], :]
+            # logging.warning('len after lon_min: {}'.format(len(ret_data)))
+            # matching_length = len(matching_indexes[0])
+
+            # end_time = time.perf_counter()
+            # elapsed_sec = end_time - start_time
+            # temp = 'time for single station bbox calc [s]: {:.3f}'.format(elapsed_sec)
+            # self.logger.info(temp)
+            # log the found times
+            # unique_times = np.unique(self.data[matching_indexes,self._TIMEINDEX]).astype('datetime64[s]')
+            # self.logger.info('matching times:')
+            # self.logger.info(unique_times)
+            return ret_data
+    ###################################################################################
+
