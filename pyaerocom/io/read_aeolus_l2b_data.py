@@ -203,6 +203,34 @@ class ReadAeolusL2bData:
         return ','.join(stat_names)
 
     ###################################################################################
+    def ndarr2data(self, file_data):
+        """small helper routine to put the data read by the read_file method into
+        the ndarray of self.data"""
+
+        # start_time_read = time.perf_counter()
+        # return all data points
+        num_points = len(file_data)
+        if self.index_pointer == 0:
+            self.data = file_data
+            self._ROWNO = num_points
+            self.index_pointer = num_points
+
+        else:
+            # append to self.data
+            # add another array chunk to self.data
+            self.data = np.append(self.data, np.zeros([num_points, self._COLNO], dtype=np.float_),
+                                  axis=0)
+            self._ROWNO = num_points
+            # copy the data
+            self.data[self.index_pointer:, :] = file_data
+            self.index_pointer = self.index_pointer + num_points
+
+            # end_time = time.perf_counter()
+            # elapsed_sec = end_time - start_time_read
+            # temp = 'time for single file read seconds: {:.3f}'.format(elapsed_sec)
+            # self.logger.warning(temp)
+
+    ###################################################################################
 
     def read_file(self, filename, vars_to_read=None, return_as='dict', loglevel=None):
         """method to read an ESA binary data file entirely
@@ -579,7 +607,6 @@ class ReadAeolusL2bData:
         """
 
         import time
-        import geopy.distance
 
         start_time = time.perf_counter()
         self.files = self.get_file_list()
@@ -588,35 +615,11 @@ class ReadAeolusL2bData:
         temp = 'time for file find: {:.3f}'.format(elapsed_sec)
         self.logger.info(temp)
 
-        # self.data = np.empty([self._ROWNO, self._COLNO], dtype=np.float_)
-
         for idx, _file in enumerate(sorted(self.files)):
             file_data = self.read_file(_file, vars_to_read=vars_to_read, return_as='numpy')
             # the metadata dict is left empty for L2 data
             # the location in the data set is time step dependant!
-
-            # start_time_read = time.perf_counter()
-            # return all data points
-            num_points = len(file_data)
-            if idx == 0:
-                self.data = file_data
-                self._ROWNO = num_points
-                self.index_pointer = num_points
-
-            else:
-                # append to self.data
-                # add another array chunk to self.data
-                self.data = np.append(self.data, np.zeros([num_points, self._COLNO], dtype=np.float_),
-                                      axis=0)
-                self._ROWNO = num_points
-                # copy the data
-                self.data[self.index_pointer:, :] = file_data
-                self.index_pointer = self.index_pointer + num_points
-
-                # end_time = time.perf_counter()
-                # elapsed_sec = end_time - start_time_read
-                # temp = 'time for single file read seconds: {:.3f}'.format(elapsed_sec)
-                # self.logger.warning(temp)
+            self.ndarr2data(file_data)
 
         end_time = time.perf_counter()
         elapsed_sec = end_time - start_time
@@ -937,4 +940,44 @@ class ReadAeolusL2bData:
             # self.logger.info(unique_times)
             return ret_data
     ###################################################################################
+
+    def plot_profile(self):
+        """plot sample profile plot
+
+        >>> import pyaerocom.io.read_aeolus_l2b_data
+        >>> obj = pyaerocom.io.read_aeolus_l2b_data.ReadAeolusL2bData(verbose=True)
+        >>> import numpy as np
+        >>> import matplotlib.pyplot as plt
+        >>> filename = '/lustre/storeA/project/aerocom/aerocom1/ADM_CALIPSO_TEST/download/AE_OPER_ALD_U_N_2A_20070101T002249149_002772000_003606_0001.DBL'
+        >>> # read returning a ndarray
+        >>> filedata_numpy = obj.read_file(filename, vars_to_read=['ec550aer'], return_as='numpy')
+        >>> obj.ndarr2data(file_data=filedata_numpy)
+        >>> import pyaerocom.plot.plotprofile
+
+        >>> ec = filedata_numpy[:,obj._EC550INDEX]
+        >>> nan_indexes = np.where(np.isnan(ec))
+        >>> ec[nan_indexes] = -999.
+        >>> height_lev_no = 24
+        >>> times = np.int(len(ec) / height_lev_no)
+        >>> ec = ec.reshape(times,height_lev_no).transpose()
+        >>> plot = plt.pcolormesh(ec, cmap='jet', vmin=2., vmax=500.)
+        >>> plot.axes.set_xlabel('time step number')
+        >>> plot.axes.set_ylabel('height step number')
+        >>> plot.axes.set_title('title')
+        >>> plt.show()
+
+
+
+
+
+
+
+
+
+
+
+        """
+
+    ###################################################################################
+
 
