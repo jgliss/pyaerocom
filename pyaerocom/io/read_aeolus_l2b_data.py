@@ -953,10 +953,13 @@ class ReadAeolusL2bData:
         >>> filedata_numpy = obj.read_file(filename, vars_to_read=['ec550aer'], return_as='numpy')
         >>> obj.ndarr2data(file_data=filedata_numpy)
         >>> import pyaerocom.plot.plotprofile
+        >>> pyaerocom.plot.plotprofile.plotcurtain(obj, filename='/home/jang/tmp/curtaintest.png',var_to_plot='ec550aer', what='mpl_scatter_density')
 
-        >>> ec = filedata_numpy[:,obj._EC550INDEX]
-        >>> nan_indexes = np.where(np.isnan(ec))
-        >>> ec[nan_indexes] = -999.
+        >>> nonnan_indexes = np.where(np.isfinite(filedata_numpy[:,obj._ALTITUDEINDEX]))[0]
+        >>> ec = filedata_numpy[nonnan_indexes,obj._EC550INDEX]
+        >>> altitudes = filedata_numpy[nonnan_indexes,obj._ALTITUDEINDEX]
+        >>> plot = plt.hist2d(altitudes, ec, cmap='jet', vmin=2., vmax=500.)
+        >>> #nan_indexes = np.where(np.isnan(ec))
         >>> height_lev_no = 24
         >>> times = np.int(len(ec) / height_lev_no)
         >>> ec = ec.reshape(times,height_lev_no).transpose()
