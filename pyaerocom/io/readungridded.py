@@ -30,6 +30,7 @@ from pyaerocom.io.read_aasetal import ReadAasEtal
 from pyaerocom.io.read_gaw import ReadGAW
 from pyaerocom.io.read_ghost import ReadGhost
 from pyaerocom.io.read_eea_aqerep import ReadEEAAQEREP
+from pyaerocom.io.read_eea_aqerep_v2 import ReadEEAAQEREP_V2
 from pyaerocom.io.read_airnow import ReadAirNow
 
 from pyaerocom.io.cachehandler_ungridded import CacheHandlerUngridded
@@ -58,7 +59,8 @@ class ReadUngridded(object):
                          ReadAasEtal,
                          ReadGhost,
                          ReadAirNow,
-                         ReadEEAAQEREP]
+                         ReadEEAAQEREP,
+                         ReadEEAAQEREP_V2]
 
                          
 

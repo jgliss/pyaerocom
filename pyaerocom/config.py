@@ -78,11 +78,14 @@ class Config(object):
     #: EBAS name
     EBAS_MULTICOLUMN_NAME = 'EBASMC'
 
-    #: EEA nmea
+    #: EEA name
     EEA_NAME = 'EEAAQeRep'
 
-    #: EEA.NRT nmea
+    #: EEA.NRT name
     EEA_NRT_NAME = 'EEAAQeRep.NRT'
+
+    #: EEA.NRT name
+    EEA_V2_NAME = 'EEAAQeRep.v2'
 
     #: Earlinet access name;
     EARLINET_NAME = 'EARLINET'
